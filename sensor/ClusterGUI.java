@@ -45,7 +45,7 @@ public class ClusterGUI extends JFrame {
         sensorComboBox = new JComboBox<>();
         sensorComboBox.setFont(new Font("Arial", Font.PLAIN, 14));
         sensorComboBox.setPreferredSize(new Dimension(200, 30));
-        sensorComboBox.addActionListener(e -> updateData());
+        sensorComboBox.addActionListener(e -> updateDataOnSelection());
         sensorPanel.add(sensorComboBox);
         add(sensorPanel, BorderLayout.CENTER);
 
@@ -73,6 +73,7 @@ public class ClusterGUI extends JFrame {
             try {
                 while (true) {
                     updateSensorList();
+                    updateDataContinuous();
                     Thread.sleep(1000);
                 }
             } catch (InterruptedException e) {
@@ -115,9 +116,6 @@ public class ClusterGUI extends JFrame {
 
                 // Update last sensor list
                 lastSensorIds = new ArrayList<>(sensorIds);
-
-                // Trigger data update only if selection changes
-                updateData();
             }
         } catch (RemoteException e) {
             e.printStackTrace();
@@ -125,7 +123,40 @@ public class ClusterGUI extends JFrame {
         }
     }
 
-    private void updateData() {
+    private void updateDataContinuous() {
+        try {
+            String selectedSensor = (String) sensorComboBox.getSelectedItem();
+            tableModel.setRowCount(0);
+            if (selectedSensor == null || selectedSensor.equals("No Sensors Available")) {
+                tableModel.addRow(new Object[]{"No sensor selected", "", "", ""});
+                return;
+            }
+
+            SensorData data = cluster.getSensorData(selectedSensor);
+            String status = cluster.getSensorStatus(selectedSensor);
+            String firmware = cluster.getFirmwareVersion(selectedSensor);
+            if (data != null) {
+                tableModel.addRow(new Object[]{"", "", status, firmware});
+                tableModel.addRow(new Object[]{"Environment Data", "", "", ""});
+                for (Map.Entry<String, Double> entry : data.getEnvironmentData().entrySet()) {
+                    tableModel.addRow(new Object[]{entry.getKey(), String.format("%.2f", entry.getValue()), "", ""});
+                }
+                tableModel.addRow(new Object[]{"Crop Data", "", "", ""});
+                for (Map.Entry<String, Double> entry : data.getCropData().entrySet()) {
+                    tableModel.addRow(new Object[]{entry.getKey(), String.format("%.2f", entry.getValue()), "", ""});
+                }
+            } else {
+                tableModel.addRow(new Object[]{"No data available for sensor " + selectedSensor, "", status, firmware});
+            }
+        } catch (RemoteException e) {
+            tableModel.setRowCount(0);
+            tableModel.addRow(new Object[]{"Failed to retrieve sensor data", "", "", ""});
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to retrieve sensor data.", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void updateDataOnSelection() {
         try {
             String selectedSensor = (String) sensorComboBox.getSelectedItem();
             tableModel.setRowCount(0);
