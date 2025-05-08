@@ -1,0 +1,1299 @@
+// sensor\Cluster.java
+package sensor;
+
+import java.rmi.RemoteException;
+import java.rmi.server.UnicastRemoteObject;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+public class Cluster extends UnicastRemoteObject implements ClusterInterface {
+    private static final long serialVersionUID = 1L;
+    private final Map<String, SensorInterface> sensors;
+    private final List<String> sensorIds;
+
+    public Cluster() throws RemoteException {
+        super();
+        sensors = new HashMap<>();
+        sensorIds = new ArrayList<>();
+    }
+
+    @Override
+    public String addSensor(SensorInterface sensor) throws RemoteException {
+        String sensorId = UUID.randomUUID().toString();
+        sensors.put(sensorId, sensor);
+        sensorIds.add(sensorId);
+        return sensorId;
+    }
+
+    @Override
+    public void removeSensor(String sensorId) throws RemoteException {
+        sensors.remove(sensorId);
+        sensorIds.remove(sensorId);
+    }
+
+    @Override
+    public List<String> getSensorIds() throws RemoteException {
+        return new ArrayList<>(sensorIds);
+    }
+
+    @Override
+    public SensorData getSensorData(String sensorId) throws RemoteException {
+        SensorInterface sensor = sensors.get(sensorId);
+        if (sensor != null) {
+            return sensor.sendData();
+        }
+        return null;
+    }
+
+    @Override
+    public Map<String, SensorData> getAllSensorData() throws RemoteException {
+        Map<String, SensorData> allData = new HashMap<>();
+        for (String sensorId : sensorIds) {
+            SensorData data = getSensorData(sensorId);
+            if (data != null) {
+                allData.put(sensorId, data);
+            }
+        }
+        return allData;
+    }
+
+    @Override
+    public void updateFirmware(String sensorId, String version) throws RemoteException {
+        SensorInterface sensor = sensors.get(sensorId);
+        if (sensor != null) {
+            sensor.updateFirmwareVersion(version);
+        }
+    }
+
+    @Override
+    public String getSensorStatus(String sensorId) throws RemoteException {
+        SensorInterface sensor = sensors.get(sensorId);
+        return sensor != null ? sensor.getStatus() : "Disconnected";
+    }
+
+    @Override
+    public Map<String, String> getAllSensorStatuses() throws RemoteException {
+        Map<String, String> statuses = new HashMap<>();
+        for (String sensorId : sensorIds) {
+            statuses.put(sensorId, getSensorStatus(sensorId));
+        }
+        return statuses;
+    }
+
+    @Override
+    public String getFirmwareVersion(String sensorId) throws RemoteException {
+        SensorInterface sensor = sensors.get(sensorId);
+        return sensor != null ? sensor.getFirmwareVersion() : "N/A";
+    }
+
+    @Override
+    public boolean isSensorConnected(String sensorId) throws RemoteException {
+        return sensors.containsKey(sensorId);
+    }
+}
+
+
+
+
+
+
+
+// sensor\ClusterGUI.java
+package sensor;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.rmi.RemoteException;
+import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+
+public class ClusterGUI extends JFrame {
+    private final ClusterInterface cluster;
+    private final JTable dataTable;
+    private final DefaultTableModel tableModel;
+    private final JComboBox<String> sensorComboBox;
+    private final JLabel statusLabel;
+    private List<String> lastSensorIds = new ArrayList<>(); // Track last sensor list
+
+    public ClusterGUI(ClusterInterface cluster) throws RemoteException {
+        this.cluster = cluster;
+        setTitle("Cluster Management");
+        setSize(800, 600);
+        setMinimumSize(new Dimension(700, 500));
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setLocationRelativeTo(null);
+        setLayout(new BorderLayout(10, 10));
+        getContentPane().setBackground(new Color(245, 245, 245));
+
+        // Header panel
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        headerPanel.setBackground(new Color(60, 141, 188));
+        headerPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        JLabel titleLabel = new JLabel("Cluster Management", SwingConstants.CENTER);
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 18));
+        titleLabel.setForeground(Color.WHITE);
+        headerPanel.add(titleLabel, BorderLayout.CENTER);
+        add(headerPanel, BorderLayout.NORTH);
+
+        // Sensor selection panel
+        JPanel sensorPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        sensorPanel.setBackground(new Color(245, 245, 245));
+        sensorPanel.setBorder(BorderFactory.createTitledBorder("Select Sensor"));
+        sensorPanel.add(new JLabel("Sensor:"));
+        sensorComboBox = new JComboBox<>();
+        sensorComboBox.setFont(new Font("Arial", Font.PLAIN, 14));
+        sensorComboBox.setPreferredSize(new Dimension(200, 30));
+        sensorComboBox.addActionListener(e -> updateDataOnSelection());
+        sensorPanel.add(sensorComboBox);
+        add(sensorPanel, BorderLayout.CENTER);
+
+        // Status panel
+        JPanel statusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        statusPanel.setBackground(new Color(245, 245, 245));
+        statusPanel.setBorder(BorderFactory.createTitledBorder("Cluster Status"));
+        statusLabel = new JLabel("Status: Running");
+        statusLabel.setFont(new Font("Arial", Font.PLAIN, 14));
+        statusPanel.add(statusLabel);
+        add(statusPanel, BorderLayout.WEST);
+
+        // Data display
+        tableModel = new DefaultTableModel(new Object[]{"Parameter", "Value", "Status", "Firmware"}, 0);
+        dataTable = new JTable(tableModel);
+        dataTable.setFont(new Font("Arial", Font.PLAIN, 12));
+        dataTable.setRowHeight(25);
+        dataTable.setGridColor(new Color(200, 200, 200));
+        JScrollPane dataScrollPane = new JScrollPane(dataTable);
+        dataScrollPane.setBorder(BorderFactory.createTitledBorder("Selected Sensor Data"));
+        add(dataScrollPane, BorderLayout.SOUTH);
+
+        // Start a thread to update sensor list and data
+        new Thread(() -> {
+            try {
+                while (true) {
+                    updateSensorList();
+                    updateDataContinuous();
+                    Thread.sleep(1000);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                e.printStackTrace();
+            }
+        }).start();
+
+        setVisible(true);
+    }
+
+    private void updateSensorList() {
+        try {
+            // Get current sensor IDs
+            List<String> sensorIds = cluster.getSensorIds();
+
+            // Check if sensor list has changed
+            if (!sensorIds.equals(lastSensorIds)) {
+                // Store current selection
+                String selectedSensor = (String) sensorComboBox.getSelectedItem();
+
+                // Create new model
+                DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
+                for (String id : sensorIds) {
+                    model.addElement(id);
+                }
+                if (sensorIds.isEmpty()) {
+                    model.addElement("No Sensors Available");
+                }
+
+                // Update model
+                sensorComboBox.setModel(model);
+
+                // Restore selection if it still exists
+                if (selectedSensor != null && !selectedSensor.equals("No Sensors Available") && sensorIds.contains(selectedSensor)) {
+                    sensorComboBox.setSelectedItem(selectedSensor);
+                } else if (!sensorIds.isEmpty()) {
+                    sensorComboBox.setSelectedIndex(0); // Select first sensor if previous selection is invalid
+                }
+
+                // Update last sensor list
+                lastSensorIds = new ArrayList<>(sensorIds);
+            }
+        } catch (RemoteException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to update sensor list.", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void updateDataContinuous() {
+        try {
+            String selectedSensor = (String) sensorComboBox.getSelectedItem();
+            tableModel.setRowCount(0);
+            if (selectedSensor == null || selectedSensor.equals("No Sensors Available")) {
+                tableModel.addRow(new Object[]{"No sensor selected", "", "", ""});
+                return;
+            }
+
+            SensorData data = cluster.getSensorData(selectedSensor);
+            String status = cluster.getSensorStatus(selectedSensor);
+            String firmware = cluster.getFirmwareVersion(selectedSensor);
+            if (data != null) {
+                tableModel.addRow(new Object[]{"", "", status, firmware});
+                tableModel.addRow(new Object[]{"Environment Data", "", "", ""});
+                for (Map.Entry<String, Double> entry : data.getEnvironmentData().entrySet()) {
+                    tableModel.addRow(new Object[]{entry.getKey(), String.format("%.2f", entry.getValue()), "", ""});
+                }
+                tableModel.addRow(new Object[]{"Crop Data", "", "", ""});
+                for (Map.Entry<String, Double> entry : data.getCropData().entrySet()) {
+                    tableModel.addRow(new Object[]{entry.getKey(), String.format("%.2f", entry.getValue()), "", ""});
+                }
+            } else {
+                tableModel.addRow(new Object[]{"No data available for sensor " + selectedSensor, "", status, firmware});
+            }
+        } catch (RemoteException e) {
+            tableModel.setRowCount(0);
+            tableModel.addRow(new Object[]{"Failed to retrieve sensor data", "", "", ""});
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to retrieve sensor data.", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void updateDataOnSelection() {
+        try {
+            String selectedSensor = (String) sensorComboBox.getSelectedItem();
+            tableModel.setRowCount(0);
+            if (selectedSensor == null || selectedSensor.equals("No Sensors Available")) {
+                tableModel.addRow(new Object[]{"No sensor selected", "", "", ""});
+                return;
+            }
+
+            SensorData data = cluster.getSensorData(selectedSensor);
+            String status = cluster.getSensorStatus(selectedSensor);
+            String firmware = cluster.getFirmwareVersion(selectedSensor);
+            if (data != null) {
+                tableModel.addRow(new Object[]{"", "", status, firmware});
+                tableModel.addRow(new Object[]{"Environment Data", "", "", ""});
+                for (Map.Entry<String, Double> entry : data.getEnvironmentData().entrySet()) {
+                    tableModel.addRow(new Object[]{entry.getKey(), String.format("%.2f", entry.getValue()), "", ""});
+                }
+                tableModel.addRow(new Object[]{"Crop Data", "", "", ""});
+                for (Map.Entry<String, Double> entry : data.getCropData().entrySet()) {
+                    tableModel.addRow(new Object[]{entry.getKey(), String.format("%.2f", entry.getValue()), "", ""});
+                }
+            } else {
+                tableModel.addRow(new Object[]{"No data available for sensor " + selectedSensor, "", status, firmware});
+            }
+        } catch (RemoteException e) {
+            tableModel.setRowCount(0);
+            tableModel.addRow(new Object[]{"Failed to retrieve sensor data", "", "", ""});
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to retrieve sensor data.", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+}
+
+
+
+
+
+
+
+// sensor\ClusterInterface.java
+package sensor;
+
+import java.rmi.Remote;
+import java.rmi.RemoteException;
+import java.util.List;
+import java.util.Map;
+
+public interface ClusterInterface extends Remote {
+    String addSensor(SensorInterface sensor) throws RemoteException;
+    void removeSensor(String sensorId) throws RemoteException;
+    List<String> getSensorIds() throws RemoteException;
+    SensorData getSensorData(String sensorId) throws RemoteException;
+    Map<String, SensorData> getAllSensorData() throws RemoteException;
+    void updateFirmware(String sensorId, String version) throws RemoteException;
+    String getSensorStatus(String sensorId) throws RemoteException;
+    Map<String, String> getAllSensorStatuses() throws RemoteException;
+    String getFirmwareVersion(String sensorId) throws RemoteException;
+    boolean isSensorConnected(String sensorId) throws RemoteException;
+}
+
+
+
+
+
+
+
+// sensor\ClusterServer.java
+package sensor;
+
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+
+public class ClusterServer {
+    public static void main(String[] args) {
+        try {
+            LocateRegistry.createRegistry(2095);
+            Cluster cluster = new Cluster();
+            Naming.rebind("rmi://localhost:2095/Cluster", cluster);
+            System.out.println("Cluster is running and bound to RMI registry on port 2095.");
+        } catch (RemoteException | java.net.MalformedURLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+// sensor\Initiator.java
+package sensor;
+
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.util.UUID;
+
+public class Initiator {
+    public static void main(String[] args) {
+        try {
+            // Start the RMI registry on port 2095
+            java.rmi.registry.LocateRegistry.createRegistry(2095);
+
+            // Start the cluster
+            Cluster cluster = new Cluster();
+            Naming.rebind("rmi://localhost:2095/Cluster", cluster);
+
+            // Start the GUI for the cluster
+            ClusterGUI clusterGUI = new ClusterGUI(cluster);
+            clusterGUI.setVisible(true);
+
+            System.out.println("Cluster is running and bound to RMI registry.");
+
+            // Create and start a sensor
+            //String sensorUrl = "rmi://localhost:2095/Sensor_" + UUID.randomUUID();
+            //Sensor sensor = new Sensor(sensorUrl);
+            //Naming.rebind(sensorUrl, sensor);
+
+            // Start the GUI for the sensor
+            //SensorGUI sensorGUI = new SensorGUI(sensor);
+            //sensorGUI.setVisible(true);
+
+            System.out.println("Sensor is running and bound to RMI registry.");
+
+        } catch (RemoteException | java.net.MalformedURLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+// sensor\Sensor.java
+package sensor;
+
+import java.rmi.RemoteException;
+import java.rmi.server.UnicastRemoteObject;
+import java.util.Random;
+
+public class Sensor extends UnicastRemoteObject implements SensorInterface {
+    private static final long serialVersionUID = 1L;
+    private SensorData data;
+    private String firmwareVersion;
+    private boolean active;
+    private ClusterInterface cluster;
+    private String sensorId;
+    private String rmiUrl;
+
+    public Sensor(String rmiUrl) throws RemoteException {
+        super();
+        this.rmiUrl = rmiUrl;
+        data = new SensorData();
+        firmwareVersion = "1.0";
+        active = true;
+        startDataUpdateThread();
+    }
+
+    public void setCluster(ClusterInterface cluster, String sensorId) throws RemoteException {
+        this.cluster = cluster;
+        this.sensorId = sensorId;
+    }
+
+    private void startDataUpdateThread() {
+        new Thread(() -> {
+            try {
+                Random random = new Random();
+                while (active) {
+                    synchronized (data) {
+                        data.addEnvironmentData("Temperature", random.nextDouble() * 40);
+                        data.addEnvironmentData("Humidity", random.nextDouble() * 100);
+                        data.addEnvironmentData("Soil Moisture", random.nextDouble() * 100);
+                        data.addEnvironmentData("Light Level", random.nextDouble() * 100);
+                        data.addEnvironmentData("CO2 Level", random.nextDouble() * 100);
+                        data.addCropData("Crop Growth", random.nextDouble() * 100);
+                        data.addCropData("Crop Health", random.nextDouble() * 100);
+                    }
+                    Thread.sleep(2000);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    @Override
+    public SensorData sendData() throws RemoteException {
+        synchronized (data) {
+            return data;
+        }
+    }
+
+    @Override
+    public void updateFirmwareVersion(String version) throws RemoteException {
+        firmwareVersion = version;
+    }
+
+    @Override
+    public String getStatus() throws RemoteException {
+        return active ? "Active" : "Disconnected";
+    }
+
+    @Override
+    public String getFirmwareVersion() throws RemoteException {
+        return firmwareVersion;
+    }
+
+    @Override
+    public String getRmiUrl() throws RemoteException {
+        return rmiUrl;
+    }
+
+    @Override
+    public void activate() throws RemoteException {
+        if (!active) {
+            active = true;
+            startDataUpdateThread();
+            if (cluster != null) {
+                cluster.getSensorStatus(sensorId);
+            }
+        }
+    }
+
+    @Override
+    public void deactivate() throws RemoteException {
+        if (active) {
+            active = false;
+            if (cluster != null) {
+                cluster.getSensorStatus(sensorId);
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+// sensor\SensorClient.java
+package sensor;
+
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.util.UUID;
+
+public class SensorClient {
+    public static void main(String[] args) {
+        try {
+            // Connect to the cluster
+            ClusterInterface cluster = (ClusterInterface) Naming.lookup("rmi://localhost:2095/Cluster");
+
+            // Create and bind a new sensor
+            String sensorUrl = "rmi://localhost:2095/Sensor_" + UUID.randomUUID();
+            Sensor sensor = new Sensor(sensorUrl);
+            Naming.rebind(sensorUrl, sensor);
+
+            // Add sensor to cluster
+            cluster.addSensor(sensor);
+
+            System.out.println("Sensor is running and connected to the cluster.");
+        } catch (RemoteException | java.net.MalformedURLException | java.rmi.NotBoundException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+// sensor\SensorData.java
+package sensor;
+
+import java.io.Serializable;
+import java.util.HashMap;
+import java.util.Map;
+
+public class SensorData implements Serializable {
+    private static final long serialVersionUID = 1L;
+    private final Map<String, Double> environmentData;
+    private final Map<String, Double> cropData;
+
+    public SensorData() {
+        this.environmentData = new HashMap<>();
+        this.cropData = new HashMap<>();
+    }
+
+    public void addEnvironmentData(String key, Double value) {
+        environmentData.put(key, value);
+    }
+
+    public void addCropData(String key, Double value) {
+        cropData.put(key, value);
+    }
+
+    public Map<String, Double> getEnvironmentData() {
+        return environmentData;
+    }
+
+    public Map<String, Double> getCropData() {
+        return cropData;
+    }
+}
+
+
+
+
+
+
+
+
+// sensor\SensorGUI.java
+package sensor;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.util.Map;
+import java.util.UUID;
+
+public class SensorGUI extends JFrame {
+    private Sensor sensor;
+    private ClusterInterface cluster;
+    private String sensorId;
+    private final JLabel statusLabel;
+    private final JLabel firmwareVersionLabel;
+    private final JTable dataTable;
+    private final DefaultTableModel tableModel;
+    private final JButton createSensorButton;
+    private final JButton deleteSensorButton;
+    private final JButton deactivateButton;
+    private final JButton activateButton;
+
+    public SensorGUI(Sensor sensor) throws RemoteException {
+        this.sensor = sensor;
+        setTitle("Sensor Management");
+        setSize(800, 600);
+        setMinimumSize(new Dimension(700, 500));
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setLocationRelativeTo(null);
+        setLayout(new BorderLayout(10, 10));
+        getContentPane().setBackground(new Color(245, 245, 245));
+
+        // Connect to cluster
+        try {
+            cluster = (ClusterInterface) Naming.lookup("rmi://localhost:2095/Cluster");
+            sensorId = cluster.addSensor(sensor);
+            sensor.setCluster(cluster, sensorId);
+        } catch (Exception e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to connect to cluster.", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+
+        // Header panel
+        JPanel headerPanel = new JPanel(new BorderLayout());
+        headerPanel.setBackground(new Color(60, 141, 188));
+        headerPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        JLabel titleLabel = new JLabel("Sensor Management - ID: " + sensorId, SwingConstants.CENTER);
+        titleLabel.setFont(new Font("Arial", Font.BOLD, 18));
+        titleLabel.setForeground(Color.WHITE);
+        headerPanel.add(titleLabel, BorderLayout.CENTER);
+        add(headerPanel, BorderLayout.NORTH);
+
+        // Control panel (placed in NORTH for guaranteed visibility)
+        JPanel controlPanel = new JPanel(new GridLayout(1, 4, 10, 10));
+        controlPanel.setBackground(new Color(245, 245, 245));
+        controlPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
+        controlPanel.setPreferredSize(new Dimension(0, 60));
+
+        createSensorButton = new JButton("Create New Sensor");
+        createSensorButton.setFont(new Font("Arial", Font.PLAIN, 14));
+        createSensorButton.setBackground(new Color(92, 184, 92));
+        createSensorButton.setForeground(Color.WHITE);
+        createSensorButton.setToolTipText("Create a new sensor and open its GUI");
+        createSensorButton.addActionListener(e -> createNewSensor());
+        controlPanel.add(createSensorButton);
+
+        deleteSensorButton = new JButton("Delete Sensor");
+        deleteSensorButton.setFont(new Font("Arial", Font.PLAIN, 14));
+        deleteSensorButton.setBackground(new Color(217, 83, 79));
+        deleteSensorButton.setForeground(Color.WHITE);
+        deleteSensorButton.setToolTipText("Delete this sensor and close its GUI");
+        deleteSensorButton.addActionListener(e -> deleteSensor());
+        controlPanel.add(deleteSensorButton);
+
+        deactivateButton = new JButton("Deactivate Sensor");
+        deactivateButton.setFont(new Font("Arial", Font.PLAIN, 14));
+        deactivateButton.setBackground(new Color(240, 173, 78));
+        deactivateButton.setForeground(Color.WHITE);
+        deactivateButton.setToolTipText("Deactivate this sensor");
+        deactivateButton.addActionListener(e -> deactivateSensor());
+        controlPanel.add(deactivateButton);
+
+        activateButton = new JButton("Activate Sensor");
+        activateButton.setFont(new Font("Arial", Font.PLAIN, 14));
+        activateButton.setBackground(new Color(91, 192, 222));
+        activateButton.setForeground(Color.WHITE);
+        activateButton.setToolTipText("Activate this sensor");
+        activateButton.addActionListener(e -> activateSensor());
+        activateButton.setEnabled(false);
+        controlPanel.add(activateButton);
+
+        add(controlPanel, BorderLayout.CENTER);
+
+        // Status panel
+        JPanel statusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        statusPanel.setBackground(new Color(245, 245, 245));
+        statusPanel.setBorder(BorderFactory.createTitledBorder("Sensor Status"));
+        statusLabel = new JLabel("Status: Active");
+        statusLabel.setFont(new Font("Arial", Font.PLAIN, 14));
+        firmwareVersionLabel = new JLabel("Firmware Version: " + sensor.getFirmwareVersion());
+        firmwareVersionLabel.setFont(new Font("Arial", Font.PLAIN, 14));
+        statusPanel.add(statusLabel);
+        statusPanel.add(Box.createHorizontalStrut(20));
+        statusPanel.add(firmwareVersionLabel);
+        add(statusPanel, BorderLayout.WEST);
+
+        // Data display
+        tableModel = new DefaultTableModel(new Object[]{"Parameter", "Value"}, 0);
+        dataTable = new JTable(tableModel);
+        dataTable.setFont(new Font("Arial", Font.PLAIN, 12));
+        dataTable.setRowHeight(25);
+        dataTable.setGridColor(new Color(200, 200, 200));
+        JScrollPane dataScrollPane = new JScrollPane(dataTable);
+        dataScrollPane.setBorder(BorderFactory.createTitledBorder("Sensor Data"));
+        add(dataScrollPane, BorderLayout.SOUTH);
+
+        // Debug button visibility
+        System.out.println("Control panel components: " + controlPanel.getComponentCount());
+        for (Component comp : controlPanel.getComponents()) {
+            System.out.println("Component: " + comp);
+        }
+
+        // Start a thread to update sensor data
+        new Thread(() -> {
+            try {
+                while (true) {
+                    updateData();
+                    Thread.sleep(1000);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                e.printStackTrace();
+            }
+        }).start();
+
+        setVisible(true);
+    }
+
+    private void createNewSensor() {
+        try {
+            String newSensorUrl = "rmi://localhost:2095/Sensor_" + UUID.randomUUID();
+            Sensor newSensor = new Sensor(newSensorUrl);
+            Naming.rebind(newSensorUrl, newSensor);
+            new SensorGUI(newSensor);
+        } catch (Exception e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to create new sensor.", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void deleteSensor() {
+        int confirm = JOptionPane.showConfirmDialog(
+                this,
+                "Are you sure you want to delete sensor " + sensorId + "?",
+                "Confirm Deletion",
+                JOptionPane.YES_NO_OPTION
+        );
+        if (confirm == JOptionPane.YES_OPTION) {
+            try {
+                cluster.removeSensor(sensorId);
+                Naming.unbind(sensor.getRmiUrl());
+                dispose();
+            } catch (Exception e) {
+                e.printStackTrace();
+                JOptionPane.showMessageDialog(this, "Failed to delete sensor.", "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    private void deactivateSensor() {
+        try {
+            sensor.deactivate();
+            statusLabel.setText("Status: Disconnected");
+            deactivateButton.setEnabled(false);
+            activateButton.setEnabled(true);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to deactivate sensor.", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void activateSensor() {
+        try {
+            sensor.activate();
+            statusLabel.setText("Status: Active");
+            deactivateButton.setEnabled(true);
+            activateButton.setEnabled(false);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Failed to activate sensor.", "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void updateData() {
+        try {
+            SensorData data = sensor.sendData();
+            statusLabel.setText("Status: " + sensor.getStatus());
+            firmwareVersionLabel.setText("Firmware Version: " + sensor.getFirmwareVersion());
+            tableModel.setRowCount(0);
+            if (data != null) {
+                tableModel.addRow(new Object[]{"", ""});
+                tableModel.addRow(new Object[]{"Environment Data", ""});
+                for (Map.Entry<String, Double> entry : data.getEnvironmentData().entrySet()) {
+                    tableModel.addRow(new Object[]{entry.getKey(), String.format("%.2f", entry.getValue())});
+                }
+                tableModel.addRow(new Object[]{"", ""});
+                tableModel.addRow(new Object[]{"Crop Data", ""});
+                for (Map.Entry<String, Double> entry : data.getCropData().entrySet()) {
+                    tableModel.addRow(new Object[]{entry.getKey(), String.format("%.2f", entry.getValue())});
+                }
+            } else {
+                tableModel.addRow(new Object[]{"No data available for sensor " + sensorId, ""});
+            }
+        } catch (RemoteException e) {
+            tableModel.setRowCount(0);
+            tableModel.addRow(new Object[]{"Failed to retrieve sensor data for " + sensorId, ""});
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+// sensor\SensorInterface.java
+package sensor;
+
+import java.rmi.Remote;
+import java.rmi.RemoteException;
+
+public interface SensorInterface extends Remote {
+    SensorData sendData() throws RemoteException;
+    void updateFirmwareVersion(String version) throws RemoteException;
+    String getStatus() throws RemoteException;
+    String getFirmwareVersion() throws RemoteException;
+    String getRmiUrl() throws RemoteException;
+    void activate() throws RemoteException;
+    void deactivate() throws RemoteException;
+}
+
+
+
+
+
+
+
+// sensor\StartClusterGUI.java
+package sensor;
+
+
+import java.rmi.Naming;
+import java.rmi.registry.LocateRegistry;
+
+public class StartClusterGUI {
+    public static void main(String[] args) {
+        try {
+            // Create and show the cluster GUI
+            LocateRegistry.createRegistry(2095);
+            Cluster cluster = new Cluster();
+            Naming.rebind("rmi://localhost:2095/Cluster", cluster);
+            System.out.println("Cluster is running and bound to RMI registry on port 2095.");
+
+
+            //Lookup the cluster on localhost (or server IP)
+            //ClusterInterface cluster = (ClusterInterface) Naming.lookup("rmi://localhost:2095/Cluster");
+
+            ClusterGUI clusterGUI = new ClusterGUI(cluster);
+            clusterGUI.setVisible(true);
+            
+            System.out.println("Cluster GUI is running.");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+
+// sensor\StartSensorGUI.java
+package sensor;
+
+import java.rmi.Naming;
+import java.util.UUID;
+
+public class StartSensorGUI {
+    public static void main(String[] args) {
+        try {
+            // Create and bind the sens
+            String sensorUrl = "rmi://localhost:2095/Sensor_" + UUID.randomUUID();
+            Sensor sensor = new Sensor(sensorUrl);
+            Naming.rebind(sensorUrl, sensor);
+
+            // Create and show the sensor GUI
+            SensorGUI sensorGUI = new SensorGUI(sensor);
+            sensorGUI.setVisible(true);
+
+            System.out.println("Sensor GUI is running.");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+// water\Cluster.java
+package water;
+
+import java.rmi.RemoteException;
+import java.rmi.server.UnicastRemoteObject;
+
+public class Cluster extends UnicastRemoteObject implements ClusterInterface {
+    private WaterSourceInterface waterSource;
+
+    public Cluster(WaterSourceInterface waterSource) throws RemoteException {
+        super();
+        this.waterSource = waterSource;
+    }
+
+    @Override
+    public void openWaterSource() throws RemoteException {
+        waterSource.open();
+    }
+
+    @Override
+    public void closeWaterSource() throws RemoteException {
+        waterSource.close();
+    }
+
+    @Override
+    public double checkWaterSourceStatus() throws RemoteException {
+        return waterSource.getStatus();
+    }
+}
+
+
+
+
+
+
+
+
+// water\ClusterGUI.java
+package water;
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.rmi.RemoteException;
+
+public class ClusterGUI extends JFrame {
+    private ClusterInterface cluster;
+    private JTextField statusField;
+    private JButton openButton;
+    private JButton closeButton;
+    private JButton checkStatusButton;
+    private JLabel notificationLabel;
+
+    public ClusterGUI(ClusterInterface cluster) {
+        this.cluster = cluster;
+        setTitle("Cluster Control");
+        setSize(400, 250);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLayout(new GridLayout(5, 1));
+        setResizable(false);
+
+        openButton = new JButton("Open Water Source");
+        closeButton = new JButton("Close Water Source");
+        checkStatusButton = new JButton("Check Water Source Status");
+        statusField = new JTextField();
+        statusField.setEditable(false);
+        notificationLabel = new JLabel("", SwingConstants.CENTER);
+        notificationLabel.setForeground(Color.RED);
+
+        openButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    cluster.openWaterSource();
+                } catch (RemoteException ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        closeButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    cluster.closeWaterSource();
+                } catch (RemoteException ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        checkStatusButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                try {
+                    double status = cluster.checkWaterSourceStatus();
+                    statusField.setText("Water Level: " + status + "%");
+                    checkWaterLevel(status);
+                } catch (RemoteException ex) {
+                    ex.printStackTrace();
+                }
+            }
+        });
+
+        add(openButton);
+        add(closeButton);
+        add(checkStatusButton);
+        add(statusField);
+        add(notificationLabel);
+        setVisible(true);
+    }
+
+    private void checkWaterLevel(double status) {
+        if (status < 40) {
+            notificationLabel.setText("Reserve water! Water level is critically low.");
+        } else {
+            notificationLabel.setText("");
+        }
+    }
+}
+
+
+
+
+
+
+
+
+// water\ClusterInterface.java
+package water;
+
+import java.rmi.Remote;
+import java.rmi.RemoteException;
+
+public interface ClusterInterface extends Remote {
+    void openWaterSource() throws RemoteException;
+    void closeWaterSource() throws RemoteException;
+    double checkWaterSourceStatus() throws RemoteException;
+}
+
+
+
+
+
+
+
+
+// water\ClusterServer.java
+package water;
+
+import java.net.MalformedURLException;
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+
+public class ClusterServer {
+    public static void main(String[] args) {
+        try {
+            LocateRegistry.createRegistry(2100);
+            WaterSource source = new WaterSource();
+            Naming.rebind("rmi://localhost:2100/WaterSource", source);
+            Cluster cluster = new Cluster(source);
+            Naming.rebind("rmi://localhost:2100/Cluster", cluster);
+            System.out.println("Cluster and water source are bound to the RMI registry.");
+        } catch (RemoteException | MalformedURLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+
+// water\WaterManagementRMI.java
+package water;
+
+import java.net.MalformedURLException;
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import javax.swing.SwingUtilities;
+
+public class WaterManagementRMI {
+    public static void main(String[] args) {
+        try {
+            // Create RMI registry
+            LocateRegistry.createRegistry(101);
+
+            // Create cluster and water sources
+            WaterSource waterSource = new WaterSource();
+            Cluster cluster = new Cluster(waterSource);
+
+            // Bind the cluster and water source to RMI registry
+            Naming.rebind("rmi://localhost:2100/WaterSource", waterSource);
+            Naming.rebind("rmi://localhost:2100/Cluster", cluster);
+
+            System.out.println("RMI setup complete. Cluster and water source are bound.");
+
+            // Start the GUIs
+            SwingUtilities.invokeLater(() -> {
+                new ClusterGUI(cluster);
+                new WaterSourceGUI(waterSource);
+            });
+        } catch (RemoteException | MalformedURLException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+
+// water\WaterSource.java
+package water;
+
+import java.rmi.RemoteException;
+import java.rmi.server.UnicastRemoteObject;
+
+public class WaterSource extends UnicastRemoteObject implements WaterSourceInterface {
+    private double waterLevel = 100.0;
+    private boolean isOpen = false;
+
+    public WaterSource() throws RemoteException {
+        super();
+    }
+
+    @Override
+    public void open() throws RemoteException {
+        isOpen = true;
+        // Start the process of reducing water level
+        new Thread(() -> {
+            try {
+                while (isOpen && waterLevel > 0) {
+                    waterLevel -= 1; // Decrease water level by 1% per second
+                    Thread.sleep(1000); // Wait for 1 second
+                }
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    @Override
+    public void close() throws RemoteException {
+        isOpen = false;
+    }
+
+    @Override
+    public double getStatus() throws RemoteException {
+        return waterLevel;
+    }
+}
+
+
+
+
+
+
+
+
+// water\WaterSourceClient.java
+package water;
+
+import java.rmi.Naming;
+import java.rmi.RemoteException;
+
+public class WaterSourceClient {
+    public static void main(String[] args) {
+        try {
+            // Locate the cluster using the RMI URL
+            ClusterInterface cluster = (ClusterInterface) Naming.lookup("rmi://localhost:2100/Cluster");
+
+            // Interact with the cluster
+            // Open the water source
+            cluster.openWaterSource();
+
+            // Wait for a while (e.g., 5 seconds) to let the water flow
+            Thread.sleep(5000);
+
+            // Check the water source status
+            double status = cluster.checkWaterSourceStatus();
+            System.out.println("Water source status: " + status + "%");
+
+            // Close the water source
+            cluster.closeWaterSource();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+
+// water\WaterSourceGUI.java
+package water;
+
+import javax.swing.*;
+import java.awt.*;
+
+public class WaterSourceGUI extends JFrame {
+    private WaterSource waterSource;
+    private JProgressBar waterLevelBar;
+
+    public WaterSourceGUI(WaterSource waterSource) {
+        this.waterSource = waterSource;
+        setTitle("Water Source");
+        setSize(400, 100);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setResizable(false);
+
+        waterLevelBar = new JProgressBar(0, 100);
+        waterLevelBar.setValue(100);
+        waterLevelBar.setStringPainted(true);
+
+        setLayout(new BorderLayout());
+        add(waterLevelBar, BorderLayout.CENTER);
+
+        // Start a thread to update the water level bar in real-time
+        new Thread(() -> {
+            try {
+                while (true) {
+                    double waterLevel = waterSource.getStatus();
+                    waterLevelBar.setValue((int) waterLevel);
+                    updateBarColor((int) waterLevel);
+                    Thread.sleep(1000);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }).start();
+
+        setVisible(true);
+    }
+
+    private void updateBarColor(int waterLevel) {
+        if (waterLevel < 40) {
+            waterLevelBar.setForeground(Color.RED);
+        } else {
+            waterLevelBar.setForeground(Color.GREEN);
+        }
+    }
+}
+
+
+
+
+
+
+
+
+// water\WaterSourceInterface.java
+package water;
+
+import java.rmi.Remote;
+import java.rmi.RemoteException;
+
+public interface WaterSourceInterface extends Remote {
+    void open() throws RemoteException;
+    void close() throws RemoteException;
+    double getStatus() throws RemoteException;
+}
+undefinedundefinedundefinedundefinedundefined
+
+
+
+
+
+
+
+
+
+// module-info.java
+module agriculture {
+	requires java.rmi;
+	requires java.desktop;
+	exports water;
+	exports sensor; 
+}
+

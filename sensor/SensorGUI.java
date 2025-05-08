@@ -32,9 +32,9 @@ public class SensorGUI extends JFrame {
         setLayout(new BorderLayout(10, 10));
         getContentPane().setBackground(new Color(245, 245, 245));
 
-        // Connect to cluster
+        // Connect to cluster on PC2
         try {
-            cluster = (ClusterInterface) Naming.lookup("rmi://localhost:2095/Cluster");
+            cluster = (ClusterInterface) Naming.lookup("rmi://192.168.163.156:2095/Cluster");
             sensorId = cluster.addSensor(sensor);
             sensor.setCluster(cluster, sensorId);
         } catch (Exception e) {
@@ -52,7 +52,7 @@ public class SensorGUI extends JFrame {
         headerPanel.add(titleLabel, BorderLayout.CENTER);
         add(headerPanel, BorderLayout.NORTH);
 
-        // Control panel (placed in NORTH for guaranteed visibility)
+        // Control panel
         JPanel controlPanel = new JPanel(new GridLayout(1, 4, 10, 10));
         controlPanel.setBackground(new Color(245, 245, 245));
         controlPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -140,7 +140,7 @@ public class SensorGUI extends JFrame {
 
     private void createNewSensor() {
         try {
-            String newSensorUrl = "rmi://localhost:2095/Sensor_" + UUID.randomUUID();
+            String newSensorUrl = "rmi://172.16.144.186:2095/Sensor_" + UUID.randomUUID();
             Sensor newSensor = new Sensor(newSensorUrl);
             Naming.rebind(newSensorUrl, newSensor);
             new SensorGUI(newSensor);
